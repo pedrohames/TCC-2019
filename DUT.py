@@ -7,7 +7,12 @@ class DUT():
         self.fw_version = device_info[1]
         self.model = device_info[2]
         self.mac_address = self.get_mac_address(IP,self.token)
+        self._2_4g = None
+        self._5g = None
+        self.get_freq(IP,self.token)
+        self.mcs_enable = self.get_mcs_enable(IP,token)
         self.enable_ssh(IP,self.token)
+        self. channels = self.get_channels(IP, self.token)
 
     def login(self, DUT_IP, user, password):
         data = {'data': {'username': user, 'password': password}}
@@ -33,7 +38,72 @@ class DUT():
             model = device_info['model']
             return api_version, fw_version, model
         except Exception as e:
+            print(e.args)
+
+    def check_online(self, DUT_IP):
+        response = os.system('ping -c 1 ' + DUT_IP + ' > /dev/null')
+        if response == 0:
+            return True
+        else:
             return False
+
+    def get_wireless_interfaces(self, DUT_IP, token):
+        interfaces = {}
+        try:
+            r_get_wireless = requests.get('http://' + DUT_IP + '/cgi-bin/api/v3/interface/wireless',
+                                          headers=token, timeout=3)
+            interfaces = json.loads(r_get_wireless.content.decode())
+            return interfaces['data']
+        except Exception as e:
+            print(e.args)
+
+    def get_mcs_enable(DUT_IP, token):
+        try:
+            r_get_wireless = requests.get('http://' + DUT_IP + '/cgi-bin/api/v3/system/device/features',
+                                          headers=token, timeout=3)
+            mcs_enable = json.loads(r_get_wireless.content.decode())['data']['wireless']['enabled_wireless_client_mode']
+            return mcs_enable
+        except Exception as e:
+            print(e.args)
+
+    def get_freq(self, DUT_IP, token):
+        try:
+            interfaces = get_wireless_interfaces(DUT_IP, token)
+            for interface in interfaces:
+                if (interface['mode_ieee'] == 'b/g/n'):
+                    self._2_4g = interface['id']
+                elif (interface['mode_ieee'] == 'a/n'):
+                    self._5g = interface['id']
+                elif (interface['mode_ieee'] == 'a/n/ac'):
+                    self._5g = interface['id']
+        except Exception as e:
+            print(e.args)
+
+    def get_channels(self, DUT_IP, token):
+        id_interfaces = []
+        regdb = {}
+        channels = []
+        try:
+            interfaces = self.get_wireless_interfaces(DUT_IP, token)
+            for interface in interfaces:
+                id_interfaces.append(interface['id'])
+            for id_interface in id_interfaces:
+                r_get_channel = requests.get(
+                    'http://' + DUT_IP + '/cgi-bin/api/v3/interface/wireless/' + id_interface + '/channels/BR',
+                    headers=token, timeout=3)
+                regdb[id_interface] = json.loads(r_get_channel.content.decode())['data']
+            regdb_keys = regdb.keys()
+            for key in regdb_keys:
+                for channel in regdb[key]:
+                    if (channel['channel'] == 'auto'):
+                        continue
+                    channels.append({'channel': channel['channel'],
+                                     'frequency': channel['mhz'],
+                                     'bw': channel['supported_bw']})
+
+            return channels
+        except Exception as e:
+            print(e.args)
 
     def get_mac_address(self, DUT_IP, token):
         try:
@@ -42,7 +112,7 @@ class DUT():
             mac_address = json.loads(r_get_wireless.content.decode())['data']['mac_address']
             return mac_address
         except Exception as e:
-            return False
+            print(e.args)
 
     def enable_ssh(self, DUT_IP, token, port = 22):
         config = {
@@ -60,7 +130,7 @@ class DUT():
             else:
                 return False
         except Exception as e:
-            return False
+            print(e.args)
 
     def apply(self, DUT_IP, token):
         try:
@@ -68,4 +138,4 @@ class DUT():
                                        headers=token, timeout=3)
             return r_post_ra0.content.decode()
         except Exception as e:
-            return False
+            print(e.args)
