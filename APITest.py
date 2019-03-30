@@ -5,7 +5,7 @@ Created on Sun Sep  9 20:40:53 2018
 
 @author: pedrohames
 """
-import DUT
+from DUT import *
 
 DUT = '192.168.15.4'
 user = 'admin'
