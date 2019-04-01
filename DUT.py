@@ -1,7 +1,7 @@
 import requests
 import json
 import os
-import wifi
+from Connect_SSID import connect
 from paramiko import SSHClient, AutoAddPolicy
 import threading
 
@@ -25,6 +25,10 @@ class DUT:
         self.enable_ssh()
         self.setup_wifi()
         self.channels = self.get_channel_list()
+        self.dev_ip = '192.168.15.132/24'
+        self.dev_gw = '192.168.15.1'
+        self.dev_dns = '8.8.8.8'
+        self.dev_interface = 'wlp3s0'
 
     def login(self):
         data = {'data': {'username': self._user, 'password': self._password}}
@@ -50,7 +54,7 @@ class DUT:
         print('2.4 GHz interface : ', (not (self.interface_2_4g is None)))
         print('2.4 channel: ', self.get_channel_2g())
         print('5 GHz interface : ', (not (self.interface_5g is None)))
-        print('5 GHz channel: ', self.get_channelinterface_5g())
+        print('5 GHz channel: ', self.get_channel_5g())
         print('MCS enable: ', self.mcs_enable)
         print('Channel List:\n', self.channels)
 
@@ -75,33 +79,32 @@ class DUT:
 
     def _ssh_worker(self, address, seconds=10, throughput=10):
         print('Coisinha', address, seconds, throughput)
+        ssh = SSHClient()
+        ssh.set_missing_host_key_policy(AutoAddPolicy())
 
-    def wifi_connect(self, ssid, password=None):
+        iperf_command = 'iperf -c ' + address + ' -t ' + str(seconds) + ' -U -b ' + str(throughput) + 'M'
+        print(iperf_command)
         try:
-            if password is None:
-                cell = list(wifi.Cell.all('wlp3s0'))[0]
-                scheme = wifi.Scheme('wlp3s0', ssid, cell)
-                scheme.activate()
-            else:
-                cell = list(wifi.Cell.all('wlp3s0'))[0]
-                scheme = wifi.Scheme('wlp3s0', ssid, cell, password)
-                scheme.activate()
+            ssh.connect(self.ip, username=self._user, password=self._password)
+            ssh.exec_command(iperf_command)
         except Exception as e:
             print(e.args)
 
-    def traffic_gen(self, interface, address, seconds=10, throughput=10):
-        if interface == self.interface_2_4g:
-            if self.wifi_connect(self.model, self.mac_address):
+    def traffic_gen(self, dut_interface, address, seconds=10, throughput=10):
+        if dut_interface == self.interface_2_4g:
+            if connect(self.model, self.dev_ip, self.dev_gw, self.dev_interface, self.dev_dns).run():
                 th = threading.Thread(target=self._ssh_worker, args=(address, seconds, throughput,))
                 th.start()
             else:
                 raise ValueError('Cannot connect on Wi-Fi')
-        elif interface == self.interface_5g:
-            if self.wifi_connect(self.model + ' 5G', self.mac_address):
+        elif dut_interface == self.interface_5g:
+            if connect(self.model + ' 5G', self.dev_ip, self.dev_gw, self.dev_interface, self.dev_dns).run():
                 th = threading.Thread(target=self._ssh_worker, args=(address, seconds, throughput,))
                 th.start()
             else:
                 raise ValueError('Cannot connect on Wi-Fi')
+        else:
+            raise ValueError('Interface not found')
 
     def get_wireless_interfaces(self):
         try:
@@ -168,7 +171,26 @@ class DUT:
         except Exception as e:
             print(e.args)
 
-    def set_channelinterface_5g(self, channel):
+    def set_bw_5g(self, bw=20):
+        try:
+            r_get = requests.get('http://' + self.ip + '/cgi-bin/api/v3/interface/wireless/' + self.interface_5g,
+                                 headers=self.token, timeout=10)
+            if r_get.status_code == 200:
+                config = json.loads(r_get.content.decode())
+                config['data']['bandwidth'] = str(bw)
+                r_post_ra0 = requests.put(
+                    'http://' + self.ip + '/cgi-bin/api/v3/interface/wireless/' + self.interface_5g,
+                    data=json.dumps(config), headers=self.token, timeout=10, verify=False)
+                if r_post_ra0.status_code == 204:
+                    self.apply()
+                else:
+                    raise ValueError('Cannot apply changes, error: ', r_post_ra0.status_code)
+            else:
+                raise ValueError('Token expired, please re-login')
+        except Exception as e:
+            print(e.args)
+
+    def set_channel_5g(self, channel):
         try:
             r_get = requests.get('http://' + self.ip + '/cgi-bin/api/v3/interface/wireless/' + self.interface_5g,
                                  headers=self.token, timeout=10)
@@ -187,12 +209,31 @@ class DUT:
         except Exception as e:
             print(e.args)
 
-    def get_channelinterface_5g(self):
+    def get_channel_5g(self):
         try:
             r_get = requests.get('http://' + self.ip + '/cgi-bin/api/v3/interface/wireless/' + self.interface_5g,
                                  headers=self.token, timeout=10)
             if r_get.status_code == 200:
                 return json.loads(r_get.content.decode())['data']['channel']
+            else:
+                raise ValueError('Token expired, please re-login')
+        except Exception as e:
+            print(e.args)
+
+    def ser_bw_2g(self, bw=20):
+        try:
+            r_get = requests.get('http://' + self.ip + '/cgi-bin/api/v3/interface/wireless/' + self.interface_2_4g,
+                                 headers=self.token, timeout=10)
+            if r_get.status_code == 200:
+                config = json.loads(r_get.content.decode())
+                config['data']['bandwidth'] = str(bw)
+                r_post_ra0 = requests.put(
+                    'http://' + self.ip + '/cgi-bin/api/v3/interface/wireless/' + self.interface_2_4g,
+                    data=json.dumps(config), headers=self.token, timeout=10, verify=False)
+                if r_post_ra0.status_code == 204:
+                    self.apply()
+                else:
+                    raise ValueError('Cannot apply changes, error: ', r_post_ra0.status_code)
             else:
                 raise ValueError('Token expired, please re-login')
         except Exception as e:
@@ -266,7 +307,8 @@ class DUT:
             if r_get_2g.status_code == 200:
                 config = json.loads(r_get_2g.content.decode())
                 config['data']['ssid'] = self.model
-                config['data']['security'] = {'password': self.mac_address, 'encryption': "psk2+ccmp"}
+                config['data']['security'] = {'encryption': "none"}
+                # {'password': password, 'encryption': "psk2+ccmp"}
                 r_post_ra0 = requests.put(
                     'http://' + self.ip + '/cgi-bin/api/v3/interface/wireless/' + self.interface_2_4g + '/ssid/ssid1',
                     data=json.dumps(config), headers=self.token, timeout=10, verify=False)
@@ -283,7 +325,8 @@ class DUT:
             if r_getinterface_5g.status_code == 200:
                 config = json.loads(r_getinterface_5g.content.decode())
                 config['data']['ssid'] = self.model + ' 5G'
-                config['data']['security'] = {'password': self.mac_address, 'encryption': "psk2+ccmp"}
+                config['data']['security'] = {'encryption': "none"}
+                # {'password': password, 'encryption': "psk2+ccmp"}
                 r_post_ra0 = requests.put(
                     'http://' + self.ip + '/cgi-bin/api/v3/interface/wireless/' + self.interface_5g + '/ssid/ssid2',
                     data=json.dumps(config), headers=self.token, timeout=10, verify=False)
