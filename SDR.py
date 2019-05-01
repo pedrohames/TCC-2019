@@ -13,7 +13,6 @@ class SDR:
             command = f'./rx_sdr -f {int(fc)} -s {int(fs)} -d {self.driver} -n {Nsamp} -F CF32 samples.dat'
         else:
             command = f'./rx_sdr -f {int(fc)} -s {int(fs)} -d {self.driver} -n {Nsamp} -F CF32 -g {gain} samples.dat'
-            print(command)
         run(command, stdout=PIPE, stderr=PIPE, universal_newlines=True, shell=True)
         return np.fromfile('samples.dat')
 
