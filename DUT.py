@@ -15,14 +15,15 @@ class DUT:
         self.interface = {'2.4G': None, '5G': None}
         self.token = self.login()
         device_info = self.get_device_info()
-        self.api_version = device_info[0]
-        self.fw_version = device_info[1]
-        self.model = device_info[2]
+        self.api_version = device_info['api_version']
+        self.fw_version = device_info['version']
+        self.model = device_info['model']
         self.mac_address = self.get_mac_address()
         self.setup_freq()
         self.mcs_enable = self.get_mcs_enable()
         self.enable_ssh()
-        self.setup_wifi()
+        self.setup_ssid()
+        self.set_tx_power()
         self.channels = self.get_channel_list()
 
     def login(self):
@@ -47,7 +48,7 @@ class DUT:
         print('5 GHz interface:', self.interface['5G'] is not None)
         print('5 GHz channel:', self.get_channel('5G'))
         print('MCS enable:', self.mcs_enable)
-        print('Channel list:', [int(ch['channel']) for ch in self.channels])
+        print('Channel list:', self.channels)
 
     def _request_get(self, tail):
         r_get = requests.get(f'http://{self.ip}/cgi-bin/api/v3/{tail}',
@@ -113,10 +114,18 @@ class DUT:
         for interface in interfaces:
             regdb[interface['id']] = self._request_get(f"interface/wireless/{interface['id']}/channels/BR")
 
-        channels = []
+        channels = {'2.4G': [], '5G': []}
         for value in regdb.values():
-            if value['channel'] != 'auto':
-                channels.append(value)
+            for channel in value:
+                if channel['channel'] != 'auto':
+                    if int(channel['channel']) <= 14:
+                        channels['2.4G'].append({'number': channel['channel'],
+                                                 'MHz': channel['mhz'],
+                                                 'bw': channel['supported_bw']})
+                    else:
+                        channels['5G'].append({'number': channel['channel'],
+                                               'MHz': channel['mhz'],
+                                               'bw': channel['supported_bw']})
         return channels
 
     def get_channel(self, band):
@@ -134,15 +143,26 @@ class DUT:
         config['bandwidth'] = str(bw)
         self._request_put(tail, config)
 
+    def set_tx_power(self, tx_power=10):
+        tail = f'interface/wireless/{self.interface["2.4G"]}'
+        config = self._request_get(tail)
+        config['txpower'] = int(tx_power)
+        self._request_put(tail, config)
+
+        tail = f'interface/wireless/{self.interface["5G"]}'
+        config = self._request_get(tail)
+        config['txpower'] = int(tx_power)
+        self._request_put(tail, config)
+
     def enable_ssh(self, port=22):
         config = self._request_get('service/ssh')
         config.update({'enabled': True, 'port': port, 'wan_access': False})
         self._request_put('service/ssh', config)
 
-    def setup_wifi(self):
+    def setup_ssid(self):
         for band, ssid in [('2.4G', 'ssid1'), ('5G', 'ssid2')]:
             tail = f'interface/wireless/{self.interface[band]}/ssid/{ssid}'
             config = self._request_get(tail)
-            config['ssid'] = f'{self.model} {band}'
+            config['ssid'] = f'{self.model}_{band}'
             config['security'] = {'encryption': 'none'}  # {'password': password, 'encryption': "psk2+ccmp"}
             self._request_put(tail, config)
