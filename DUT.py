@@ -17,7 +17,7 @@ class DUT:
         device_info = self.get_device_info()
         self.api_version = device_info['api_version']
         self.fw_version = device_info['version']
-        self.model = device_info['model']
+        self.model = device_info['model'].replace(' ', '_')
         self.mac_address = self.get_mac_address()
         self.setup_freq()
         self.mcs_enable = self.get_mcs_enable()

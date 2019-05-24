@@ -20,11 +20,13 @@ class Tester:
             self.server_ip = server_ip
             self.ms_split_fft = 10
             self.sleep_time = 5
+            self.supported_bw = [5, 10, 20]
         except Exception as e:
             print(e)
 
     def random_test(self, ratio, ms, n_fft, band=None):
         test_channels = []
+        result = []
         if band is None:
             test_channels.append(self.dut.channels.values)
         elif band == '2.4G' or '5G':
@@ -35,7 +37,30 @@ class Tester:
         indexes = np.random.randint(0, len(test_channels)-1,  number_channels)
         print(f'testing with {[test_channels[n] for n in indexes]}')
         for channel in test_channels:
-            self.spectral_mask_test(channel, channel['suported_bw'][0], ms, n_fft)
+            for bw in channel['supported_bw']:
+                if bw in self.supported_bw:
+                    result.append({'ch_number': channel['ch_number'],
+                                   'fc': channel['mhz'],
+                                   'bw': bw,
+                                   'result': self.spectral_mask_test(channel, bw, ms, n_fft)})
+        return result
+
+    def full_test(self, ms, n_fft):
+        channels = self.dut.channels.values()
+        result = []
+
+        for band in channels: # loop responsable to use both interfaces: 2.4 GHz and 5 GHz
+
+            for channel in band: # loop responsable to test all channels
+                ch_number = channel['channel']
+                fc = channel['mhz']
+                for bw in channel['supported_bw']:
+                    if bw in self.supported_bw:
+                        result.append({'ch_number': ch_number,
+                                       'fc': fc,
+                                       'bw': bw,
+                                       'result': self.spectral_mask_test()})
+        return result
 
     @staticmethod
     def traffic_gen(address, seconds):
