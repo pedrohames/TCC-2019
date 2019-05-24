@@ -5,13 +5,22 @@ import matplotlib.pyplot as plt
 
 class SDR:
 
-    def __init__(self, fs=20e6):
-        # Initialising HackRF One
-        self.driver = 'driver=hackrf'
+    def __init__(self, fs=20e6, supported_bw=None, driver=None, path=None):
         self.fs = fs
-        self.path = '/dev/shm/samples.dat'
+        if supported_bw is None:
+            self.supported_bw = ['5', '10', '20']
+        else:
+            self.supported_bw = supported_bw
+        if driver is None:  # Initialising HackRF One
+            self.driver = 'driver=hackrf'
+        else:
+            self.driver = driver
+        if path is None:
+            self.path = '/dev/shm/samples.dat'
+        else:
+            self.path = path
 
-    def receive(self, fc, msec, gain = 20):
+    def receive(self, fc, msec, gain=20):
         Nsamp = int(self.fs * msec / 1000)  # Number of samples
         size_Bytes = Nsamp*128/8
         max_ram = 1024**3
@@ -22,7 +31,7 @@ class SDR:
         run(command, stdout=PIPE, stderr=PIPE, universal_newlines=True, shell=True)
         return np.fromfile(self.path, np.complex64)
 
-    def receive_to_file(self, fc, msec, gain = 20):
+    def receive_to_file(self, fc, msec, gain=20):
         Nsamp = int(self.fs * msec / 1000)  # Number of samples
         size_Bytes = Nsamp*128/8
         max_ram = 1024**3
@@ -37,7 +46,8 @@ class SDR:
     def receive_from_file(path):
         return np.fromfile(path, np.complex64)
 
-    def fft(self, s_t, n_fft):
+    @staticmethod
+    def fft(s_t, n_fft):
         freqs = np.fft.fft(s_t, n_fft)
         freqs[0] = freqs[1]
         freqs_shift = np.fft.fftshift(freqs)
@@ -54,37 +64,42 @@ class SDR:
             s_f_list.append(self.fft(s_f_split, n_fft))
         return np.array(s_f_list)
 
-    def max_freq_hold(self, s_f_list):
-        max = np.zeros(s_f_list[0].size)
+    @staticmethod
+    def max_freq_hold(s_f_list):
+        s_f_max = np.zeros(s_f_list[0].size)
         for s_f in s_f_list:
-            max = np.maximum(max, s_f)
-        return max
+            s_f_max = np.maximum(s_f_max, s_f)
+        return s_f_max
 
-    def check_mask(self, s_f, bw, n_fft):
+    @staticmethod
+    def check_mask(s_f, bw, n_fft):
         s_f_dbr = np.empty(len(s_f))
         max_s_f = max(s_f)
-        mask = np.fromfile(f'masks/mask_{int(bw/1e6)}MHz_{n_fft}.dat', np.float64)
+        mask = np.fromfile(f'masks/mask_{bw}MHz_{n_fft}.dat', np.float64)
         for x in range(0, len(s_f)):
             s_f_dbr[x] = s_f[x] - max_s_f
         result = np.sum(np.less_equal(s_f_dbr, mask))
         return result/n_fft
 
-    def fake_check_mask(self):
-        return 1 - np.random.randint(1, 2000)/100000
+    @staticmethod
+    def fake_check_mask():
+        return 1 - np.random.rand()*0.05
 
-    def mask_print(self, s_f, bw, n_fft, fc):
+    @staticmethod
+    def mask_print(s_f, bw, n_fft, fc):
         s_f_dbr = np.empty(len(s_f))
+        print(s_f.shape)
         max_s_f = max(s_f)
-        mask = np.fromfile(f'masks/mask_{int(bw/1e6)}MHz_{n_fft}.dat', np.float64)
+        print(f'====BW={bw}====')
+        mask = np.fromfile(f'masks/mask_{bw}MHz_{n_fft}.dat', np.float64)
         for x in range(0, len(s_f)):
             s_f_dbr[x] = s_f[x] - max_s_f
 
-        f_axis = np.linspace((fc - bw), fc + bw, n_fft)
-        plt.plot(f_axis / 1e6, s_f_dbr)
-        plt.plot(f_axis / 1e6, mask)
-        plt.legend((f'{int(bw/1e6)} MHz signal at {int(fc/1e6)} MHz', f'{int(bw/1e6)} MHz IEEE mask'))
+        f_axis = np.linspace((fc - bw/2), fc + bw/2, n_fft)
+        plt.plot(f_axis, s_f_dbr)
+        plt.plot(f_axis, mask)
+        plt.legend((f'{bw} MHz signal at {fc} MHz', f'{bw} MHz IEEE mask'))
         plt.xlabel('F [MHz]')
         plt.ylabel('Attenuation [dBr]')
         plt.title('IEEE 802.11 spectral mask analysis')
         plt.show()
-

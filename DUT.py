@@ -58,16 +58,19 @@ class DUT:
         else:
             raise ValueError(f'Error: Request tail: {tail}, Error code: {r_get.status_code}')
 
-    def _request_put(self, tail, data):
+    def _request_put(self, tail, data, apply=True):
         r_put = requests.put(f'http://{self.ip}/cgi-bin/api/v3/{tail}',
                              data=json.dumps({'data': data}), verify=False,
                              headers=self.token, timeout=self.timeout)
         if r_put.status_code == 204:
-            r_post = requests.post(f'http://{self.ip}/cgi-bin/api/v3/system/apply',
-                                   headers=self.token, timeout=self.timeout)
-            if r_post.status_code == 200:
+            if apply:
+                r_post = requests.post(f'http://{self.ip}/cgi-bin/api/v3/system/apply',
+                                       headers=self.token, timeout=self.timeout)
+                if r_post.status_code == 200:
+                    return True
+                raise ValueError(f'Error: Could not apply: Request tail: {tail}, Error code: {r_post.status_code}')
+            else:
                 return True
-            raise ValueError(f'Error: Could not apply: Request tail: {tail}, Error code: {r_post.status_code}')
         raise ValueError(f'Error: Request tail: {tail}, Error code: {r_put.status_code}')
 
     def get_device_info(self):
@@ -118,51 +121,47 @@ class DUT:
         for value in regdb.values():
             for channel in value:
                 if channel['channel'] != 'auto':
-                    if int(channel['channel']) <= 14:
-                        channels['2.4G'].append({'number': channel['channel'],
-                                                 'MHz': channel['mhz'],
-                                                 'bw': channel['supported_bw']})
-                    else:
-                        channels['5G'].append({'number': channel['channel'],
-                                               'MHz': channel['mhz'],
-                                               'bw': channel['supported_bw']})
+                    key = '2.4G' if int(channel['channel']) <= 14 else '5G'
+                    channels[key].append({'number': channel['channel'],
+                                          'MHz': channel['mhz'],
+                                          'bw': channel['supported_bw']})
         return channels
 
     def get_channel(self, band):
         return self._request_get(f'interface/wireless/{self.interface[band]}')['channel']
 
-    def set_channel(self, band, channel):
+    def set_channel(self, band, channel, apply=True):
         tail = f'interface/wireless/{self.interface[band]}'
         config = self._request_get(tail)
         config['channel'] = str(channel)
-        self._request_put(tail, config)
+        self._request_put(tail, config, apply)
 
-    def set_bw(self, band, bw):
+    def set_bw(self, band, bw, apply=True):
         tail = f'interface/wireless/{self.interface[band]}'
         config = self._request_get(tail)
         config['bandwidth'] = str(bw)
-        self._request_put(tail, config)
+        self._request_put(tail, config, apply)
 
-    def set_tx_power(self, tx_power=10):
+    def set_tx_power(self, tx_power=10, apply=True):
         tail = f'interface/wireless/{self.interface["2.4G"]}'
         config = self._request_get(tail)
         config['txpower'] = int(tx_power)
-        self._request_put(tail, config)
+        self._request_put(tail, config, apply)
 
         tail = f'interface/wireless/{self.interface["5G"]}'
         config = self._request_get(tail)
         config['txpower'] = int(tx_power)
-        self._request_put(tail, config)
+        self._request_put(tail, config, apply)
 
-    def enable_ssh(self, port=22):
+    def enable_ssh(self, port=22, apply=True):
         config = self._request_get('service/ssh')
         config.update({'enabled': True, 'port': port, 'wan_access': False})
-        self._request_put('service/ssh', config)
+        self._request_put('service/ssh', config, apply)
 
-    def setup_ssid(self):
+    def setup_ssid(self, apply=True):
         for band, ssid in [('2.4G', 'ssid1'), ('5G', 'ssid2')]:
             tail = f'interface/wireless/{self.interface[band]}/ssid/{ssid}'
             config = self._request_get(tail)
             config['ssid'] = f'{self.model}_{band}'
             config['security'] = {'encryption': 'none'}  # {'password': password, 'encryption': "psk2+ccmp"}
-            self._request_put(tail, config)
+            self._request_put(tail, config, apply)

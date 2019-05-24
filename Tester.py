@@ -10,62 +10,60 @@ import time
 class Tester:
 
     def __init__(self, dut_ip, user, password, server_ip):
-        try:
-            self.dut = DUT.DUT(dut_ip, user, password)
-            print('Device under test successfully started')
-            print(f'Model: {self.dut.model}')
-            print(f'Firmware: {self.dut.fw_version}')
-            print(f'Api version: {self.dut.api_version}')
-            self.sdr = SDR.SDR()
-            self.server_ip = server_ip
-            self.ms_split_fft = 10
-            self.sleep_time = 5
-            self.supported_bw = [5, 10, 20]
-        except Exception as e:
-            print(e)
+        self.dut = DUT.DUT(dut_ip, user, password)
+        print('Device under test successfully started')
+        print(f'Model: {self.dut.model}')
+        print(f'Firmware: {self.dut.fw_version}')
+        print(f'Api version: {self.dut.api_version}')
+        self.sdr = SDR.SDR()
+        self.server_ip = server_ip
+        self.ms_split_fft = 10
+        self.sleep_time = 5
+        self.supported_bw = [5, 10, 20]
 
-    def random_test(self, ratio, ms, n_fft, band=None):
-        test_channels = []
+    def random_test(self, ratio, ms, n_fft, band=None, verbose=False):
         result = []
         if band is None:
-            test_channels.append(self.dut.channels.values)
-        elif band == '2.4G' or '5G':
-            test_channels.append(self.dut.channels[band])
+            test_channels = self.dut.channels.values
+        elif band in ['2.4G', '5G']:
+            test_channels = self.dut.channels[band]
         else:
             raise ValueError(f'Band {band} does not match')
-        number_channels = len(test_channels)*ratio
-        indexes = np.random.randint(0, len(test_channels)-1,  number_channels)
+        number_channels = round(len(test_channels) * ratio)
+        indexes = np.random.randint(0, len(test_channels) - 1, number_channels)
+        print(indexes)
         print(f'testing with {[test_channels[n] for n in indexes]}')
-        for channel in test_channels:
-            for bw in channel['supported_bw']:
+        for index in indexes:
+            channel = test_channels[index]
+            print(channel)
+            for bw in channel['bw']:
                 if bw in self.supported_bw:
-                    result.append({'ch_number': channel['ch_number'],
-                                   'fc': channel['mhz'],
+                    result.append({'ch_number': channel['number'],
+                                   'fc': channel['MHz'],
                                    'bw': bw,
-                                   'result': self.spectral_mask_test(channel, bw, ms, n_fft)})
+                                   'result': self.spectral_mask_test(channel, bw, ms, n_fft, printable=verbose)})
         return result
 
-    def full_test(self, ms, n_fft):
+    def full_test(self, ms, n_fft, band=None, verbose=False):
         channels = self.dut.channels.values()
         result = []
 
-        for band in channels: # loop responsable to use both interfaces: 2.4 GHz and 5 GHz
+        for band in channels:  # loop responsable to use both interfaces: 2.4 GHz and 5 GHz
 
-            for channel in band: # loop responsable to test all channels
-                ch_number = channel['channel']
-                fc = channel['mhz']
-                for bw in channel['supported_bw']:
+            for channel in band:  # loop responsable to test all channels
+                for bw in channel['bw']:
                     if bw in self.supported_bw:
-                        result.append({'ch_number': ch_number,
-                                       'fc': fc,
+                        result.append({'ch_number': channel['number'],
+                                       'fc': channel['MHz'],
                                        'bw': bw,
-                                       'result': self.spectral_mask_test()})
+                                       'result': self.spectral_mask_test(channel, bw, ms, n_fft, printable=verbose)})
         return result
 
     @staticmethod
     def traffic_gen(address, seconds):
-        command = f'iperf -c {address} -i 1 -w 256k -p 3 -t {seconds} '
-        run(command, stdout=PIPE, stderr=PIPE, universal_newlines=True, shell=True)
+        command = f'iperf -c {address} -i 1 -w 256k -P 3 -t {int(seconds)} > /dev/null'
+        print(command)
+        os.system(command)
 
     @staticmethod
     def ping(address):
@@ -74,13 +72,13 @@ class Tester:
 
     def spectral_mask_test(self, channel, bw, ms, n_fft, printable=False, fake_check=False):
         freq = channel['MHz']
-        channel_number = channel['number']
+        channel_number = int(channel['number'])
         if channel_number <= 14:
             band = '2.4G'
         else:
             band = '5G'
 
-        self.dut.set_bw(band, bw)
+        self.dut.set_bw(band, bw, apply=False)
         self.dut.set_channel(band, channel_number)
         time.sleep(self.sleep_time)
         attempts = 0
@@ -98,9 +96,10 @@ class Tester:
         th.start()
         s_t = self.sdr.receive(freq, ms)
         s_f = self.sdr.fft_split(s_t, n_fft, self.ms_split_fft)
+        s_f_max = self.sdr.max_freq_hold(s_f)
         if fake_check:
             return self.sdr.fake_check_mask()
         else:
             if printable:
-                self.sdr.mask_print(s_f, bw, n_fft, freq)
-            return self.sdr.check_mask(s_f, bw, n_fft)
+                self.sdr.mask_print(s_f_max, int(bw), n_fft, int(freq))
+            return self.sdr.check_mask(s_f_max, int(bw), n_fft)
