@@ -5,6 +5,8 @@ import threading
 import os
 import time
 import datetime
+import sys
+import random
 
 
 class Tester:
@@ -22,6 +24,7 @@ class Tester:
         self.sdr_bw = self.sdr.supported_bw
 
     def random_test(self, ratio, ms, n_fft, band=None, verbose=False, save=True, plot=False):
+        str_time = datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
         result = []
         if band is None:
             test_channels = self.dut.channels.values
@@ -30,22 +33,21 @@ class Tester:
         else:
             raise ValueError(f'Band {band} does not match')
         number_channels = round(len(test_channels) * ratio)
-        indexes = np.random.randint(0, len(test_channels) - 1, number_channels)
-        print(indexes)
-        print(f'testing with {[test_channels[n] for n in indexes]}')
-        for index in indexes:
-            channel = test_channels[index]
-            print(channel)
+        channels = random.sample(test_channels, number_channels)
+        for channel in channels:
             for bw in channel['bw']:
-                if bw in self.sdr_bw:
-                    result.append({'ch_number': channel['number'],
-                                   'fc': channel['MHz'],
-                                   'bw': bw,
-                                   'result': self.spectral_mask_test(channel, bw, ms, n_fft, plot=plot, save=save, verbose=verbose)})
+                if str(bw) in self.sdr_bw:
+                    if str(bw) in self.sdr_bw:
+                        self.verbose_check(verbose, f"Random setup: Fc={channel['MHz']} MHz and bw={bw} MHz")
+                        result.append({'ch_number': channel['number'],
+                                       'fc': channel['MHz'],
+                                       'bw': bw,
+                                       'result': self.spectral_mask_test(channel, bw, ms, n_fft, str_time, plot=plot, save=save, verbose=verbose)})
         return result
 
     def full_test(self, ms, n_fft, band=None, verbose=False, save=True, plot=False):
         channels = self.dut.channels
+        str_time = datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
         result = []
         test_channels = []
         if band is None:
@@ -56,11 +58,12 @@ class Tester:
             raise ValueError(f'Band {band} does not match')
         for channel in test_channels:  # loop responsable to test all channels
             for bw in channel['bw']:
-                if bw in self.sdr_bw:
+                if str(bw) in self.sdr_bw:
+                    self.verbose_check(verbose, f"Full loop setup: Fc={channel['MHz']} MHz and bw={bw} MHz")
                     result.append({'ch_number': channel['number'],
                                    'fc': channel['MHz'],
                                    'bw': bw,
-                                   'result': self.spectral_mask_test(channel, bw, ms, n_fft, plot=plot, save=save, verbose=verbose)})
+                                   'result': self.spectral_mask_test(channel, bw, ms, n_fft, str_time, plot=plot, save=save, verbose=verbose)})
         return result
 
     @staticmethod
@@ -82,10 +85,9 @@ class Tester:
     @staticmethod
     def path_creator(path):
         if not os.path.exists(path):
-            os.mkdir(path)
+            os.system(f'mkdir -p {path}')
 
-    def spectral_mask_test(self, channel, bw, ms, n_fft, plot=False, save=True, verbose=False, fake_check=False):
-        now = datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
+    def spectral_mask_test(self, channel, bw, ms, n_fft, str_time, plot=False, save=True, verbose=False, fake_check=False):
         freq = channel['MHz']
         channel_number = int(channel['number'])
         if channel_number <= 14:
@@ -98,16 +100,20 @@ class Tester:
         time.sleep(self.sleep_time)
         self.verbose_check(verbose, f'Waiting for server to get back online.')
         attempts = 0
-        while attempts < 10:
+        max_attempts = 10
+        while attempts < max_attempts*2:
+            sys.stdout.write('.')
             if self.ping(self.server_ip):
+                sys.stdout.write('\n')
                 break
             else:
                 if attempts == 9:
-                    self.verbose_check(verbose, f'Was not possible to reach the server with this setup, going to test with the next one.')
+                    sys.stdout.write('\n')
+                    self.verbose_check(verbose, f"Wasn't possible to reach the server with this setup, going to test with the next one.")
                     return -1
                 else:
                     attempts += 1
-                    time.sleep(self.sleep_time)
+                    time.sleep(self.sleep_time/2)
         self.verbose_check(verbose, 'Server online again, starting traffic generator.')
         th = threading.Thread(target=self.traffic_gen, args=(self.server_ip, np.ceil((ms / 1000) + self.sleep_time)))
         th.start()
@@ -119,9 +125,9 @@ class Tester:
         s_f_max = self.sdr.max_freq_hold(s_f)
         if save:
             self.verbose_check(verbose, 'Saving some informations.')
-            path = f'{self.dut.model}/{self.dut.fw_version}/{now}'
+            path = f'./results/{self.dut.model}/{self.dut.fw_version}/{str_time}'
             self.path_creator(path)
-            s_f_max.tofile(f'{path}/{freq}_{bw}.dat', format=np.float)
+            s_f_max.tofile(f'{path}/{freq}_{bw}.dat')
             self.sdr.mask_plot(s_f_max, int(bw), n_fft, int(freq), path=path, save=True)
             result = self.sdr.fake_check_mask()
             self.verbose_check(verbose, f'Result for freq: {freq} and bw: {bw} \n{result}')

@@ -22,6 +22,7 @@ class DUT:
         self.setup_freq()
         self.mcs_enable = self.get_mcs_enable()
         self.enable_ssh()
+        self.enable_dfs_channels()
         self.setup_ssid()
         self.set_tx_power(tx_power)
         self.channels = self.get_channel_list()
@@ -136,13 +137,19 @@ class DUT:
         config['channel'] = str(channel)
         self._request_put(tail, config, apply)
 
+    def enable_dfs_channels(self, band='5G', apply=True):
+        tail = f'interface/wireless/{self.interface[band]}'
+        config = self._request_get(tail)
+        config['enable_dfs_channels'] = True
+        self._request_put(tail, config, apply)
+
     def set_bw(self, band, bw, apply=True):
         tail = f'interface/wireless/{self.interface[band]}'
         config = self._request_get(tail)
         config['bandwidth'] = str(bw)
         self._request_put(tail, config, apply)
 
-    def set_tx_power(self, tx_power=10, apply=True):
+    def set_tx_power(self, tx_power=17, apply=True):
         tail = f'interface/wireless/{self.interface["2.4G"]}'
         config = self._request_get(tail)
         config['txpower'] = int(tx_power)

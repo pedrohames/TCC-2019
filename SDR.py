@@ -1,17 +1,18 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from subprocess import PIPE, run
 
 from scipy import signal
 
 
 class SDR:
 
-    def __init__(self, fs=20e6, supported_bw=None, driver='driver=hackrf'):
+    def __init__(self, fs=20e6, supported_bw=None, driver='driver=hackrf', rx_sdr_path=None):
         self.fs = fs
         self.supported_bw = ['5', '10', '20'] if supported_bw is None else supported_bw
         self.driver = driver
-        self._rx_sdr_path = '/usr/bin/rx_sdr'
+        self._rx_sdr_path = './rx_sdr' if rx_sdr_path is None else rx_sdr_path
         self._tmp_ramfile_path = '/dev/shm/samples.dat'
         try:
             os.remove(self._tmp_ramfile_path)
@@ -24,9 +25,9 @@ class SDR:
         max_ram = 1024**3
         if size_bytes > max_ram:
             raise ValueError('Sorry, too many samples.')
-        command = f'{self._rx_sdr_path} -f {int(fc)} -s {int(self.fs)} -d {self.driver} -n {Nsamp} -F CF32 -g {gain} {self._tmp_ramfile_path}'
-        print(command)
-        os.system(command)
+        command = f'{self._rx_sdr_path} -f {int(fc)*1e6} -s {int(self.fs)} -d {self.driver} -n {Nsamp} -F CF32 -g {gain} {self._tmp_ramfile_path}'
+        # Using run because I do not want that the output being printed
+        run(command, stdout=PIPE, stderr=PIPE, universal_newlines=True, shell=True)
 
     def receive(self, fc, msec, gain='LNA=20'):
         self._receive_to_ram(fc, msec, gain)
@@ -80,9 +81,11 @@ class SDR:
         plt.ylabel('Attenuation [dBr]')
         plt.title('IEEE 802.11 spectral mask analysis')
         if save and path is not None:
-            if not os.path.exists('./result'):
-                os.mkdir('./result')
+            if not os.path.exists(path):
+                os.system(f'mkdir -p {path}')
+                plt.savefig(f'{path}/Fc={fc}MHz_BW={bw}MHz.png', format='png')
             else:
-                plt.savefig(f'{path}_Fc={fc}MHz_BW={bw}MHz.png', format='png')
+                plt.savefig(f'{path}/Fc={fc}MHz_BW={bw}MHz.png', format='png')
         else:
             plt.show()
+        plt.close()
