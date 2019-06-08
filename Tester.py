@@ -1,10 +1,10 @@
 import SDR
 import DUT
 import numpy as np
-from subprocess import PIPE, run
 import threading
 import os
 import time
+import datetime
 
 
 class Tester:
@@ -18,10 +18,10 @@ class Tester:
         self.sdr = SDR.SDR()
         self.server_ip = server_ip
         self.ms_split_fft = 10
-        self.sleep_time = 5
-        self.supported_bw = [5, 10, 20]
+        self.sleep_time = 10
+        self.sdr_bw = self.sdr.supported_bw
 
-    def random_test(self, ratio, ms, n_fft, band=None, verbose=False):
+    def random_test(self, ratio, ms, n_fft, band=None, verbose=False, save=True, plot=False):
         result = []
         if band is None:
             test_channels = self.dut.channels.values
@@ -37,27 +37,36 @@ class Tester:
             channel = test_channels[index]
             print(channel)
             for bw in channel['bw']:
-                if bw in self.supported_bw:
+                if bw in self.sdr_bw:
                     result.append({'ch_number': channel['number'],
                                    'fc': channel['MHz'],
                                    'bw': bw,
-                                   'result': self.spectral_mask_test(channel, bw, ms, n_fft, printable=verbose)})
+                                   'result': self.spectral_mask_test(channel, bw, ms, n_fft, plot=plot, save=save, verbose=verbose)})
         return result
 
-    def full_test(self, ms, n_fft, band=None, verbose=False):
-        channels = self.dut.channels.values()
+    def full_test(self, ms, n_fft, band=None, verbose=False, save=True, plot=False):
+        channels = self.dut.channels
         result = []
-
-        for band in channels:  # loop responsable to use both interfaces: 2.4 GHz and 5 GHz
-
-            for channel in band:  # loop responsable to test all channels
-                for bw in channel['bw']:
-                    if bw in self.supported_bw:
-                        result.append({'ch_number': channel['number'],
-                                       'fc': channel['MHz'],
-                                       'bw': bw,
-                                       'result': self.spectral_mask_test(channel, bw, ms, n_fft, printable=verbose)})
+        test_channels = []
+        if band is None:
+            test_channels.append(value for value in channels.values())
+        elif band in ['2.4G', '5G']:
+            test_channels = channels[band]
+        else:
+            raise ValueError(f'Band {band} does not match')
+        for channel in test_channels:  # loop responsable to test all channels
+            for bw in channel['bw']:
+                if bw in self.sdr_bw:
+                    result.append({'ch_number': channel['number'],
+                                   'fc': channel['MHz'],
+                                   'bw': bw,
+                                   'result': self.spectral_mask_test(channel, bw, ms, n_fft, plot=plot, save=save, verbose=verbose)})
         return result
+
+    @staticmethod
+    def verbose_check(verbose, str_to_print):
+        if verbose:
+            print(str_to_print)
 
     @staticmethod
     def traffic_gen(address, seconds):
@@ -70,36 +79,59 @@ class Tester:
         response = os.system(f'ping -c 3 {address} > /dev/null')
         return response == 0
 
-    def spectral_mask_test(self, channel, bw, ms, n_fft, printable=False, fake_check=False):
+    @staticmethod
+    def path_creator(path):
+        if not os.path.exists(path):
+            os.mkdir(path)
+
+    def spectral_mask_test(self, channel, bw, ms, n_fft, plot=False, save=True, verbose=False, fake_check=False):
+        now = datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
         freq = channel['MHz']
         channel_number = int(channel['number'])
         if channel_number <= 14:
             band = '2.4G'
         else:
             band = '5G'
-
+        self.verbose_check(verbose, f'Setting DUT with Fc={freq} MHz and BW={bw}.')
         self.dut.set_bw(band, bw, apply=False)
         self.dut.set_channel(band, channel_number)
         time.sleep(self.sleep_time)
+        self.verbose_check(verbose, f'Waiting for server to get back online.')
         attempts = 0
         while attempts < 10:
             if self.ping(self.server_ip):
                 break
             else:
                 if attempts == 9:
-                    raise ValueError('Server is not online, please check.')
+                    self.verbose_check(verbose, f'Was not possible to reach the server with this setup, going to test with the next one.')
+                    return -1
                 else:
                     attempts += 1
                     time.sleep(self.sleep_time)
-
+        self.verbose_check(verbose, 'Server online again, starting traffic generator.')
         th = threading.Thread(target=self.traffic_gen, args=(self.server_ip, np.ceil((ms / 1000) + self.sleep_time)))
         th.start()
+        time.sleep(2)
+        self.verbose_check(verbose, f'Starting the capture at {freq} MHz during {ms} ms.')
         s_t = self.sdr.receive(freq, ms)
+        self.verbose_check(verbose, f'Signal processing...')
         s_f = self.sdr.fft_split(s_t, n_fft, self.ms_split_fft)
         s_f_max = self.sdr.max_freq_hold(s_f)
+        if save:
+            self.verbose_check(verbose, 'Saving some informations.')
+            path = f'{self.dut.model}/{self.dut.fw_version}/{now}'
+            self.path_creator(path)
+            s_f_max.tofile(f'{path}/{freq}_{bw}.dat', format=np.float)
+            self.sdr.mask_plot(s_f_max, int(bw), n_fft, int(freq), path=path, save=True)
+            result = self.sdr.fake_check_mask()
+            self.verbose_check(verbose, f'Result for freq: {freq} and bw: {bw} \n{result}')
+            return result
+
         if fake_check:
-            return self.sdr.fake_check_mask()
+            result = self.sdr.fake_check_mask()
+            self.verbose_check(verbose, f'Result for freq: {freq} and bw: {bw} \n{result}')
+            return result
         else:
-            if printable:
-                self.sdr.mask_print(s_f_max, int(bw), n_fft, int(freq))
+            if plot:
+                self.sdr.mask_plot(s_f_max, int(bw), n_fft, int(freq))
             return self.sdr.check_mask(s_f_max, int(bw), n_fft)

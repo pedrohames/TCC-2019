@@ -7,7 +7,7 @@ import threading
 
 class DUT:
 
-    def __init__(self, ip, user, password):
+    def __init__(self, ip, user, password, tx_power=17):
         self.ip = ip
         self.timeout = 30
         self.user = user
@@ -23,7 +23,7 @@ class DUT:
         self.mcs_enable = self.get_mcs_enable()
         self.enable_ssh()
         self.setup_ssid()
-        self.set_tx_power()
+        self.set_tx_power(tx_power)
         self.channels = self.get_channel_list()
 
     def login(self):

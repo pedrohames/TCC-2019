@@ -1,105 +1,88 @@
+import os
 import numpy as np
-from subprocess import PIPE, run
 import matplotlib.pyplot as plt
+
+from scipy import signal
 
 
 class SDR:
 
-    def __init__(self, fs=20e6, supported_bw=None, driver=None, path=None):
+    def __init__(self, fs=20e6, supported_bw=None, driver='driver=hackrf'):
         self.fs = fs
-        if supported_bw is None:
-            self.supported_bw = ['5', '10', '20']
-        else:
-            self.supported_bw = supported_bw
-        if driver is None:  # Initialising HackRF One
-            self.driver = 'driver=hackrf'
-        else:
-            self.driver = driver
-        if path is None:
-            self.path = '/dev/shm/samples.dat'
-        else:
-            self.path = path
+        self.supported_bw = ['5', '10', '20'] if supported_bw is None else supported_bw
+        self.driver = driver
+        self._rx_sdr_path = '/usr/bin/rx_sdr'
+        self._tmp_ramfile_path = '/dev/shm/samples.dat'
+        try:
+            os.remove(self._tmp_ramfile_path)
+        except OSError:
+            pass
 
-    def receive(self, fc, msec, gain=20):
+    def _receive_to_ram(self, fc, msec, gain):
         Nsamp = int(self.fs * msec / 1000)  # Number of samples
-        size_Bytes = Nsamp*128/8
+        size_bytes = Nsamp*128/8
         max_ram = 1024**3
-        if size_Bytes > max_ram:
+        if size_bytes > max_ram:
             raise ValueError('Sorry, too many samples.')
+        command = f'{self._rx_sdr_path} -f {int(fc)} -s {int(self.fs)} -d {self.driver} -n {Nsamp} -F CF32 -g {gain} {self._tmp_ramfile_path}'
+        print(command)
+        os.system(command)
 
-        command = f'./rx_sdr -f {int(fc)} -s {int(self.fs)} -d {self.driver} -n {Nsamp} -F CF32 -g LNA={gain} {self.path}'
-        run(command, stdout=PIPE, stderr=PIPE, universal_newlines=True, shell=True)
-        return np.fromfile(self.path, np.complex64)
+    def receive(self, fc, msec, gain='LNA=20'):
+        self._receive_to_ram(fc, msec, gain)
+        return np.fromfile(self._tmp_ramfile_path, np.complex64)
 
-    def receive_to_file(self, fc, msec, gain=20):
-        Nsamp = int(self.fs * msec / 1000)  # Number of samples
-        size_Bytes = Nsamp*128/8
-        max_ram = 1024**3
-        if size_Bytes > max_ram:
-            raise ValueError('Sorry, too many samples.')
-
-        command = f'./rx_sdr -f {int(fc)} -s {int(self.fs)} -d {self.driver} -n {Nsamp} -F CF32 -g LNA={gain} {self.path}'
-        run(command, stdout=PIPE, stderr=PIPE, universal_newlines=True, shell=True)
-        return self.path
+    def receive_to_file(self, path, fc, msec, gain='LNA=20'):
+        self._receive_to_ram(fc, msec, gain)
+        command = f'cp {self._tmp_ramfile_path} {path}'
+        os.system(command)
 
     @staticmethod
     def receive_from_file(path):
         return np.fromfile(path, np.complex64)
 
-    @staticmethod
-    def fft(s_t, n_fft):
-        freqs = np.fft.fft(s_t, n_fft)
-        freqs[0] = freqs[1]
-        freqs_shift = np.fft.fftshift(freqs)
-        return 20 * np.log10(np.abs(freqs_shift))
+    def fft_split2(self, s_t, n_fft):
+        f, t, a = signal.spectrogram(s_t, fs=self.fs, nperseg=n_fft, nfft=n_fft, return_onesided=False, mode='magnitude')
+        return 20*np.log10(np.fft.fftshift(a.T, axes=(1,)))
 
     def fft_split(self, s_t, n_fft, time_ms):
-        split_samples = self.fs*(time_ms/1000)
-        split_n = int(np.floor(len(s_t)/split_samples))
-        s_f_list = []
-        for n in range(0, split_n-1):
-            p0 = int(n * split_samples)
-            p1 = int((n + 1) * split_samples)
-            s_f_split = s_t[p0:p1]
-            s_f_list.append(self.fft(s_f_split, n_fft))
-        return np.array(s_f_list)
+        split_samples = int(self.fs * time_ms/1000)
+        split_n = s_t.size // split_samples
+        s_t -= np.mean(s_t)  # Remove DC.
+        s_t_trunc = s_t[:split_samples * split_n]
+        s_t_split = np.reshape(s_t_trunc, newshape=(split_n, split_samples))
+        s_f_split = np.fft.fft(s_t_split, n_fft, axis=1)
+        return 20 * np.log10(np.abs(np.fft.fftshift(s_f_split, axes=(1,))))
 
     @staticmethod
     def max_freq_hold(s_f_list):
-        s_f_max = np.zeros(s_f_list[0].size)
-        for s_f in s_f_list:
-            s_f_max = np.maximum(s_f_max, s_f)
-        return s_f_max
-
-    @staticmethod
-    def check_mask(s_f, bw, n_fft):
-        s_f_dbr = np.empty(len(s_f))
-        max_s_f = max(s_f)
-        mask = np.fromfile(f'masks/mask_{bw}MHz_{n_fft}.dat', np.float64)
-        for x in range(0, len(s_f)):
-            s_f_dbr[x] = s_f[x] - max_s_f
-        result = np.sum(np.less_equal(s_f_dbr, mask))
-        return result/n_fft
+        return np.amax(s_f_list, axis=0)
 
     @staticmethod
     def fake_check_mask():
-        return 1 - np.random.rand()*0.05
+        return 1 - np.random.rand() * 0.05
 
     @staticmethod
-    def mask_print(s_f, bw, n_fft, fc):
-        s_f_dbr = np.empty(len(s_f))
-        print(s_f.shape)
-        max_s_f = max(s_f)
-        print(f'====BW={bw}====')
+    def check_mask(s_f, bw, n_fft):
         mask = np.fromfile(f'masks/mask_{bw}MHz_{n_fft}.dat', np.float64)
-        for x in range(0, len(s_f)):
-            s_f_dbr[x] = s_f[x] - max_s_f
+        s_f_dbr = s_f - np.max(s_f)
+        return np.mean(s_f_dbr <= mask)
 
-        f_axis = np.linspace((fc - bw/2), fc + bw/2, n_fft)
-        plt.plot(f_axis, s_f_dbr)
-        plt.plot(f_axis, mask)
+    @staticmethod
+    def mask_plot(s_f, bw, n_fft, fc, path=None, save=False):
+        mask = np.fromfile(f'masks/mask_{bw}MHz_{n_fft}.dat', np.float64)
+        s_f_dbr = s_f - np.max(s_f)
+
+        f_axis = np.linspace(fc - bw/2, fc + bw/2, n_fft)
+        plt.plot(f_axis, s_f_dbr, f_axis, mask)
         plt.legend((f'{bw} MHz signal at {fc} MHz', f'{bw} MHz IEEE mask'))
         plt.xlabel('F [MHz]')
         plt.ylabel('Attenuation [dBr]')
         plt.title('IEEE 802.11 spectral mask analysis')
-        plt.show()
+        if save and path is not None:
+            if not os.path.exists('./result'):
+                os.mkdir('./result')
+            else:
+                plt.savefig(f'{path}_Fc={fc}MHz_BW={bw}MHz.png', format='png')
+        else:
+            plt.show()
