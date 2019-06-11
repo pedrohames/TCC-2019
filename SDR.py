@@ -26,7 +26,7 @@ class SDR:
         if size_bytes > max_ram:
             raise ValueError('Sorry, too many samples.')
         command = f'{self._rx_sdr_path} -f {int(fc)*1e6} -s {int(self.fs)} -d {self.driver} -n {Nsamp} -F CF32 -g {gain} {self._tmp_ramfile_path}'
-        # Using run because I do not want that the output being printed
+        # Using run because I do not want the output being printed
         run(command, stdout=PIPE, stderr=PIPE, universal_newlines=True, shell=True)
 
     def receive(self, fc, msec, gain='LNA=20'):

@@ -21,9 +21,9 @@ class DUT:
         self.mac_address = self.get_mac_address()
         self.setup_freq()
         self.mcs_enable = self.get_mcs_enable()
-        self.enable_ssh()
-        self.enable_dfs_channels()
-        self.setup_ssid()
+        self.enable_ssh(apply=False)
+        self.enable_dfs_channels(apply=False)
+        self.setup_ssid(apply=False)
         self.set_tx_power(tx_power)
         self.channels = self.get_channel_list()
 
