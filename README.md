@@ -2,7 +2,7 @@
 This project was developed during my graduation as my final work degree.
 It is responsible for automating an end-to-end test on a wireless router. The test itself checks if the configuration of the channel setup using a config API is applied on the physical layer of the router.
 
-## Steps as the test
+## Steps of the test
 
 - Set up the environment and configure the router with the channel to be tested.
 - Wait for the environment to be able to be tested after applying the config.
